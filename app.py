@@ -7,46 +7,47 @@ app.secret_key = os.getenv("SECRET_KEY", "secret")
 
 DB_PATH = os.getenv("DATABASE_PATH", "catalog.db")
 
+
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
+
 def init_db():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        price REAL NOT NULL,
-        status TEXT NOT NULL
-    )
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            price REAL NOT NULL,
+            status TEXT NOT NULL
+        )
     """)
     conn.commit()
     conn.close()
 
-@app.before_first_request
-def setup():
-    init_db()
 
-# -------- PUBLIC --------
+init_db()
+
+
 @app.route("/")
 def home():
     return "Catalog running"
 
+
 @app.route("/api/catalog")
 def api_catalog():
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM products ORDER BY id DESC")
-    data = [dict(row) for row in cur.fetchall()]
+    rows = conn.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
     conn.close()
-    return jsonify(data)
+    return jsonify([dict(row) for row in rows])
 
-# -------- AUTH --------
+
 def is_auth():
     return session.get("auth") is True
+
 
 @app.route("/admin/login", methods=["GET", "POST"])
 def login():
@@ -57,6 +58,7 @@ def login():
         ):
             session["auth"] = True
             return redirect("/admin")
+
     return """
     <h3>Login</h3>
     <form method="post">
@@ -66,21 +68,20 @@ def login():
     </form>
     """
 
+
 @app.route("/admin/logout")
 def logout():
     session.clear()
     return redirect("/admin/login")
 
-# -------- ADMIN --------
+
 @app.route("/admin")
 def admin():
     if not is_auth():
         return redirect("/admin/login")
 
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM products ORDER BY id DESC")
-    rows = cur.fetchall()
+    rows = conn.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
     conn.close()
 
     html = """
@@ -115,14 +116,14 @@ def admin():
 
     return html
 
+
 @app.route("/admin/add", methods=["POST"])
 def add():
     if not is_auth():
         return redirect("/admin/login")
 
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
+    conn.execute(
         "INSERT INTO products (name, price, status) VALUES (?, ?, ?)",
         (
             request.form.get("name"),
@@ -134,14 +135,14 @@ def add():
     conn.close()
     return redirect("/admin")
 
+
 @app.route("/admin/update/<int:id>", methods=["POST"])
 def update(id):
     if not is_auth():
         return redirect("/admin/login")
 
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
+    conn.execute(
         "UPDATE products SET name=?, price=?, status=? WHERE id=?",
         (
             request.form.get("name"),
@@ -154,14 +155,14 @@ def update(id):
     conn.close()
     return redirect("/admin")
 
+
 @app.route("/admin/delete/<int:id>", methods=["POST"])
 def delete(id):
     if not is_auth():
         return redirect("/admin/login")
 
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM products WHERE id=?", (id,))
+    conn.execute("DELETE FROM products WHERE id=?", (id,))
     conn.commit()
     conn.close()
     return redirect("/admin")

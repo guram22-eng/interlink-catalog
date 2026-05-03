@@ -9,7 +9,6 @@ app.secret_key = os.getenv("SECRET_KEY", "secret")
 
 DB_PATH = os.getenv("DATABASE_PATH", "catalog.db")
 
-
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row

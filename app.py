@@ -1,169 +1,181 @@
-from flask import Flask, request, jsonify, redirect, session
-from flask_cors import CORS
-import sqlite3
 import os
+from flask import Flask, request, jsonify, redirect, render_template_string
+from flask_cors import CORS
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 CORS(app)
-app.secret_key = os.getenv("SECRET_KEY", "secret")
 
-DB_PATH = os.getenv("DATABASE_PATH", "catalog.db")
+# ENV (задать в Render)
+DB_HOST = os.environ.get("DB_HOST")
+DB_NAME = os.environ.get("DB_NAME")
+DB_USER = os.environ.get("DB_USER")
+DB_PASS = os.environ.get("DB_PASS")
+DB_PORT = os.environ.get("DB_PORT", "5432")
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            price REAL NOT NULL,
-            status TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
+ADMIN_LOGIN = os.environ.get("ADMIN_LOGIN", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1234")
 
 
-init_db()
+def get_conn():
+    return psycopg2.connect(
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASS,
+        port=DB_PORT,
+        cursor_factory=RealDictCursor
+    )
 
 
 @app.route("/")
 def home():
-    return "Catalog running"
+    return "Interlink Catalog API работает"
 
 
-@app.route("/api/catalog")
-def api_catalog():
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
-    conn.close()
-    return jsonify([dict(row) for row in rows])
+# ================= ADMIN =================
 
+ADMIN_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Admin</title>
+<style>
+body{font-family:Arial;max-width:900px;margin:20px auto;}
+input,select{width:100%;padding:6px;margin-bottom:8px;}
+button{padding:8px 12px;background:#16a34a;color:#fff;border:0;border-radius:6px;}
+.card{border:1px solid #ddd;padding:10px;border-radius:10px;margin-bottom:10px;}
+</style>
+</head>
+<body>
 
-def is_auth():
-    return session.get("auth") is True
+<h2>Добавить товар</h2>
 
+<form method="POST" action="/admin/add">
 
-@app.route("/admin/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        if (
-            request.form.get("u") == os.getenv("ADMIN_USERNAME")
-            and request.form.get("p") == os.getenv("ADMIN_PASSWORD")
-        ):
-            session["auth"] = True
-            return redirect("/admin")
+<select name="category">
+<option value="split">Split</option>
+<option value="multisplit">MultiSplit</option>
+</select>
 
-    return """
-    <h3>Login</h3>
-    <form method="post">
-        <input name="u" placeholder="login"><br><br>
-        <input name="p" type="password" placeholder="password"><br><br>
-        <button>Login</button>
-    </form>
-    """
+<input name="series" placeholder="Серия">
 
+<input name="indoor" placeholder="Внутренний блок">
+<input name="indoor_price" placeholder="Цена внутреннего">
 
-@app.route("/admin/logout")
-def logout():
-    session.clear()
-    return redirect("/admin/login")
+<input name="outdoor" placeholder="Наружный блок">
+<input name="outdoor_price" placeholder="Цена наружного">
+
+<input name="mxz_model" placeholder="MXZ модель (для мульти)">
+<input name="mxz_price" placeholder="Цена MXZ">
+
+<select name="status">
+<option>В наличии</option>
+<option>Под заказ</option>
+</select>
+
+<button>Сохранить</button>
+</form>
+
+<hr>
+
+<h2>Список</h2>
+
+{% for item in items %}
+<div class="card">
+<b>{{item.series}}</b><br>
+
+{% if item.category == 'split' %}
+{{item.indoor}} ({{item.indoor_price}}) + {{item.outdoor}} ({{item.outdoor_price}})
+<br>ИТОГО: {{item.total}}
+{% else %}
+MXZ: {{item.mxz_model}} — {{item.mxz_price}}
+{% endif %}
+
+<br>Статус: {{item.status}}
+</div>
+{% endfor %}
+
+</body>
+</html>
+"""
 
 
 @app.route("/admin")
 def admin():
-    if not is_auth():
-        return redirect("/admin/login")
+    login = request.args.get("login")
+    password = request.args.get("password")
 
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
+    if login != ADMIN_LOGIN or password != ADMIN_PASSWORD:
+        return "Access denied"
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM catalog ORDER BY id DESC")
+    items = cur.fetchall()
+
+    cur.close()
     conn.close()
 
-    html = """
-    <h2>Catalog Admin</h2>
-    <a href="/admin/logout">Logout</a>
-    <hr>
-    <form method="post" action="/admin/add">
-        <input name="name" placeholder="Model" required>
-        <input name="price" placeholder="Price" required>
-        <select name="status">
-            <option>В наличии</option>
-            <option>Под заказ</option>
-        </select>
-        <button>Add</button>
-    </form>
-    <hr>
-    """
-
-    for r in rows:
-        html += f"""
-        <form method="post" action="/admin/update/{r['id']}">
-            <input name="name" value="{r['name']}" required>
-            <input name="price" value="{r['price']}" required>
-            <input name="status" value="{r['status']}" required>
-            <button>Save</button>
-        </form>
-        <form method="post" action="/admin/delete/{r['id']}">
-            <button>Delete</button>
-        </form>
-        <hr>
-        """
-
-    return html
+    return render_template_string(ADMIN_HTML, items=items)
 
 
 @app.route("/admin/add", methods=["POST"])
-def add():
-    if not is_auth():
-        return redirect("/admin/login")
+def add_item():
+    data = request.form
 
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO products (name, price, status) VALUES (?, ?, ?)",
-        (
-            request.form.get("name"),
-            float(request.form.get("price")),
-            request.form.get("status"),
-        ),
-    )
+    category = data.get("category")
+
+    indoor_price = int(data.get("indoor_price") or 0)
+    outdoor_price = int(data.get("outdoor_price") or 0)
+    total = indoor_price + outdoor_price
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    INSERT INTO catalog
+    (category, series, indoor, indoor_price, outdoor, outdoor_price, total,
+     mxz_model, mxz_price, status)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """, (
+        category,
+        data.get("series"),
+        data.get("indoor"),
+        indoor_price,
+        data.get("outdoor"),
+        outdoor_price,
+        total,
+        data.get("mxz_model"),
+        int(data.get("mxz_price") or 0),
+        data.get("status")
+    ))
+
     conn.commit()
+    cur.close()
     conn.close()
-    return redirect("/admin")
+
+    return redirect("/admin?login=admin&password=1234")
 
 
-@app.route("/admin/update/<int:id>", methods=["POST"])
-def update(id):
-    if not is_auth():
-        return redirect("/admin/login")
+# ================= API =================
 
-    conn = get_db()
-    conn.execute(
-        "UPDATE products SET name=?, price=?, status=? WHERE id=?",
-        (
-            request.form.get("name"),
-            float(request.form.get("price")),
-            request.form.get("status"),
-            id,
-        ),
-    )
-    conn.commit()
+@app.route("/api/catalog")
+def catalog():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM catalog ORDER BY id DESC")
+    items = cur.fetchall()
+
+    cur.close()
     conn.close()
-    return redirect("/admin")
+
+    return jsonify(items)
 
 
-@app.route("/admin/delete/<int:id>", methods=["POST"])
-def delete(id):
-    if not is_auth():
-        return redirect("/admin/login")
-
-    conn = get_db()
-    conn.execute("DELETE FROM products WHERE id=?", (id,))
-    conn.commit()
-    conn.close()
-    return redirect("/admin")
+if __name__ == "__main__":
+    app.run()

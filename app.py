@@ -1,8 +1,10 @@
 from flask import Flask, request, jsonify, redirect, session
+from flask_cors import CORS
 import sqlite3
 import os
 
 app = Flask(__name__)
+CORS(app)
 app.secret_key = os.getenv("SECRET_KEY", "secret")
 
 DB_PATH = os.getenv("DATABASE_PATH", "catalog.db")
